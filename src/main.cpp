@@ -10,6 +10,7 @@ struct ShaderInfo {
   float blob_thickness;
   float liquidness;
   float blur_strength;
+  alignas(16) vec3 chromatic_aberration;
 };
 
 struct Blob {
@@ -101,7 +102,8 @@ int main() {
     .blob_count     = static_cast<unsigned int>(g_blobs.size()),
     .blob_thickness = 0.034f,
     .liquidness     = 0.3f,
-    .blur_strength  = 0.5f
+    .blur_strength  = 0.75f,
+    .chromatic_aberration = vec3(0.009f, 0.0101f, 0.013f)
   };
 
   engine.write_buffer(shader_info_buffer, shader_info);
