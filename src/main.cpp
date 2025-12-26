@@ -9,6 +9,7 @@ struct ShaderInfo {
   unsigned int blob_count;
   float blob_thickness;
   float liquidness;
+  float blur_strength;
 };
 
 struct Blob {
@@ -99,7 +100,8 @@ int main() {
     .dims           = uvec2(width, height),
     .blob_count     = static_cast<unsigned int>(g_blobs.size()),
     .blob_thickness = 0.034f,
-    .liquidness     = 0.3f
+    .liquidness     = 0.3f,
+    .blur_strength  = 0.5f
   };
 
   engine.write_buffer(shader_info_buffer, shader_info);

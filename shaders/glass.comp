@@ -2,6 +2,7 @@
 #extension GL_EXT_shader_image_load_formatted : require
 
 #define MAX_BLOBS 15
+#define MAX_BLUR_RADIUS 10.0
 
 struct Blob {
   float s;
@@ -17,6 +18,7 @@ layout(binding = 2) uniform _ShaderInfo {
   uint _BlobCount;
   float _BlobThickness;
   float _Liquidness;
+  float _BlurStrength;
 };
 
 layout(binding = 3) buffer _BlobBuffer {
@@ -41,6 +43,23 @@ float smin(float a, float b, float k) {
   return min(a, b) - 0.25 * h * h * k;
 }
 
+vec3 blur(ivec2 index, float strength) {
+  int radius = int(strength * MAX_BLUR_RADIUS);
+
+  vec3 color = vec3(0.0);
+  for (int x = -radius; x <= radius; ++x) {
+    for (int y = -radius; y <= radius; ++y) {
+      ivec2 i = index + ivec2(x, y);
+      i = clamp(i, ivec2(0, 0), ivec2(_Dims - 1));
+
+      color += imageLoad(_RenderTarget, i).rgb;
+    }
+  }
+
+  float sample_width = 2.0 * radius + 1;
+  return color / (sample_width * sample_width);
+}
+
 void main() {
   uvec2 index = gl_GlobalInvocationID.xy;
   if (!all(lessThan(index, _Dims))) return;
@@ -60,13 +79,14 @@ void main() {
   float shape_mask = float(blended_sdf <= 0.0);
   float edge_mask = smoothstep(-_BlobThickness, 0.0, blended_sdf);
 
-  vec2 refraction = mix(vec2(0.01), vec2(0.05), edge_mask);
+  vec2 refraction = mix(vec2(0.01), vec2(0.03), edge_mask);
   uv += refraction;
   uv = clamp(uv, vec2(0.0), vec2(1.0));
-
   ivec2 refracted_index = ivec2(uv * vec2(_Dims));
 
-  vec3 shape_color = imageLoad(_RenderTarget, refracted_index).rgb;
+  float blur_strength = _BlurStrength + mix(-0.1, 0.1, edge_mask);
+
+  vec3 shape_color = blur(refracted_index, blur_strength);
   vec3 background_color = imageLoad(_RenderTarget, ivec2(index)).rgb;
 
   vec3 albedo = mix(background_color, shape_color, shape_mask);
