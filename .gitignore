@@ -1,0 +1,6 @@
+# Directories
+build/
+.cache/
+
+# Files
+.DS_Store

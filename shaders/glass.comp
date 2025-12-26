@@ -1,0 +1,79 @@
+#version 460
+#extension GL_EXT_shader_image_load_formatted : require
+
+#define MAX_BLOBS 15
+
+struct Blob {
+  float s;
+  float r;
+  vec2 pos;
+  float thickness;
+  vec3 col;
+};
+
+struct SDFInfo {
+  float sdf;
+  float body_mask;
+  float edge_mask;
+};
+
+layout(binding = 0) uniform image2D _RenderTarget;
+layout(binding = 1) uniform image2D _PostProcessTarget;
+
+layout(binding = 2) uniform _ShaderInfo {
+  uvec2 _Dims;
+  uint _BlobCount;
+};
+
+layout(binding = 3) buffer _BlobBuffer {
+  Blob _Blobs[];
+};
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+float blob_sdf(vec2 ndc, Blob blob) {
+  vec2 p = ndc - blob.pos;
+
+  float x2 = p.x * p.x;
+  float y2 = p.y * p.y;
+  float r2 = blob.r * blob.r;
+  float R2 = x2 + y2 + blob.s * blob.s / r2 * x2 * y2;
+
+  return sqrt(R2) - blob.r;
+}
+
+void main() {
+  uvec2 index = gl_GlobalInvocationID.xy;
+  if (!all(lessThan(index, _Dims))) return;
+
+  vec2 uv = (vec2(index) + 0.5) / vec2(_Dims);
+  vec2 ndc = 2.0 * uv - 1.0;
+  ndc.x *= float(_Dims.x) / float(_Dims.y);
+  ndc.y *= -1.0;
+
+  float shape_mask = 0.0;
+  vec3 body_color = vec3(1.0);
+  vec3 edge_color = vec3(1.0);
+  vec3 shape_color = vec3(0.0);
+  SDFInfo sdfs[MAX_BLOBS];
+  for (int i = 0; i < _BlobCount; ++i) {
+    Blob b = _Blobs[i];
+
+    sdfs[i].sdf = blob_sdf(ndc, b);
+    if (sdfs[i].sdf > 0.0) continue;
+
+    shape_mask = 1.0;
+
+    sdfs[i].edge_mask = smoothstep(-b.thickness, 0.0, sdfs[i].sdf);
+    sdfs[i].body_mask = 1.0 - sdfs[i].edge_mask;
+
+    edge_color *= vec3(0.3) * b.col;
+    body_color *= b.col;
+    shape_color += edge_color * sdfs[i].edge_mask + body_color * sdfs[i].body_mask;
+  }
+
+  vec3 background = imageLoad(_RenderTarget, ivec2(index)).rgb;
+  vec3 albedo = mix(background, shape_color, shape_mask);
+
+  imageStore(_PostProcessTarget, ivec2(index), vec4(albedo, 1.0));
+}
