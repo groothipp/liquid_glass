@@ -7,14 +7,14 @@ using namespace groot;
 struct ShaderInfo {
   uvec2 dims;
   unsigned int blob_count;
+  float blob_thickness;
+  float liquidness;
 };
 
 struct Blob {
   float s;
   float r;
   vec2 pos;
-  float thickness;
-  alignas(16) vec3 col;
 };
 
 struct Physics {
@@ -34,9 +34,9 @@ struct State {
 };
 
 std::vector<Blob> g_blobs = {
-  { 0.0f, 0.3f, vec2(0.0f, 0.5f), 0.02f, vec3(1.0f, 0.0f, 0.0f) },
-  { 1.0f, 0.3f, vec2(-0.8667f, -0.5f), 0.03f, vec3(0.0f, 1.0f, 0.0f) },
-  { 2.0f, 0.3f, vec2(0.8667f, -0.5f), 0.05f, vec3(0.0f, 0.0f, 1.0f) }
+  { 0.0f, 0.3f, vec2(0.0f, 0.5f) },
+  { 1.0f, 0.3f, vec2(-0.8667f, -0.5f) },
+  { 2.0f, 0.3f, vec2(0.8667f, -0.5f) }
 };
 
 std::vector<Physics> g_physics = {{}, {}, {}};
@@ -96,8 +96,10 @@ int main() {
   engine.add_to_scene(triangle);
 
   ShaderInfo shader_info{
-    .dims       = uvec2(width, height),
-    .blob_count = static_cast<unsigned int>(g_blobs.size())
+    .dims           = uvec2(width, height),
+    .blob_count     = static_cast<unsigned int>(g_blobs.size()),
+    .blob_thickness = 0.034f,
+    .liquidness     = 0.3f
   };
 
   engine.write_buffer(shader_info_buffer, shader_info);
