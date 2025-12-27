@@ -6,7 +6,7 @@
 using namespace groot;
 
 struct ShaderInfo {
-  uvec2 dims;
+  alignas(8) uvec2 dims;
   unsigned int blob_count;
   float blob_thickness;
   float liquidness;
@@ -28,9 +28,10 @@ struct PhysicsInfo {
 struct Blob {
   float s;
   float r;
-  vec2 pos;
-  vec2 vel;
-  vec2 accel;
+  alignas(16) vec3 col;
+  alignas(8) vec2 pos;
+  alignas(8) vec2 vel;
+  alignas(8) vec2 accel;
 };
 
 struct State {
@@ -129,8 +130,8 @@ int main() {
     .dims           = uvec2(width, height),
     .dragged_index  = 0xFFFFFFFFu,
     .friction       = 0.3f,
-    .tension_gamma  = 0.045f,
-    .tension_bounds = vec2(0.45f, 1.44f)
+    .tension_gamma  = 0.04f,
+    .tension_bounds = vec2(0.45f, 1.3f)
   };
 
   State state{
@@ -155,8 +156,9 @@ int main() {
 
     if (engine.just_pressed(Key::Space)) {
       state.blobs.emplace_back(Blob{
-        .s      = rand(),
-        .r      = rand(0.1f, 0.3f),
+        .s      = rand(0.0f, 1.0f),
+        .r      = rand(0.1f, 0.267f),
+        .col    = vec3(rand(), rand(), rand()),
         .pos    = vec2(rand(-ar, ar), rand(-1.0f, 1.0f)),
         .vel    = vec2(0.0f),
         .accel  = vec2(0.0f)

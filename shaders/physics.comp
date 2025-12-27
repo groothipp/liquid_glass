@@ -3,6 +3,7 @@
 struct Blob {
   float s;
   float r;
+  vec3 col;
   vec2 pos;
   vec2 vel;
   vec2 accel;
