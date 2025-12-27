@@ -1,0 +1,123 @@
+#version 460
+
+#define MAX_BLOBS 15
+
+struct Blob {
+  float s;
+  float r;
+  vec2 pos;
+};
+
+struct Physics {
+  vec2 a;
+  vec2 v;
+};
+
+layout(binding = 0) buffer _BlobBuffer {
+  Blob _Blobs[];
+};
+
+layout(binding = 1) buffer _PhysicsBuffer {
+  Physics _Physics[];
+};
+
+layout(binding = 2) uniform _PhysicsSettings {
+  uint _BlobCount;
+  float _DeltaTime;
+  float _Friction;
+  float _SurfaceTensionStrength;
+  float _SurfaceTensionRange;
+  vec2 _MouseNDC;
+  uint _DragIndex;
+  uint _IsDragging;
+  vec2 _MouseVelocity;
+  float _AspectRatio;
+};
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+  uint i = gl_GlobalInvocationID.x;
+  if (i >= _BlobCount) return;
+  
+  Blob blob = _Blobs[i];
+  Physics phys = _Physics[i];
+  
+  // Reset acceleration
+  phys.a = vec2(0.0);
+  
+  // Mouse dragging force
+  if (_IsDragging == 1 && i == _DragIndex) {
+    // Transfer mouse velocity
+    float velocity_transfer = 0.5;
+    phys.v = phys.v * 0.8 + _MouseVelocity * velocity_transfer;
+    
+    // Spring force toward cursor
+    vec2 to_mouse = _MouseNDC - blob.pos;
+    float spring_strength = 15.0;
+    phys.a += to_mouse * spring_strength;
+  }
+  
+  // Blob-to-blob surface tension forces
+  for (uint j = 0; j < _BlobCount; ++j) {
+    if (i == j) continue;
+    
+    Blob other = _Blobs[j];
+    vec2 delta = other.pos - blob.pos;
+    float dist = length(delta);
+    
+    // Combined radius (when blobs should start attracting)
+    float interaction_dist = (blob.r + other.r) * _SurfaceTensionRange;
+    
+    if (dist < interaction_dist && dist > 0.001) {
+      // Attract when close (surface tension)
+      vec2 direction = delta / dist;
+      
+      // Strength increases as blobs get closer
+      float strength = 1.0 - (dist / interaction_dist);
+      strength = strength * strength; // Quadratic falloff for snappier feel
+      
+      phys.a += direction * strength * _SurfaceTensionStrength;
+    }
+  }
+  
+  // Apply acceleration to velocity
+  phys.v += phys.a * _DeltaTime;
+  
+  // Apply friction
+  if (length(phys.v) > 0.0) {
+    vec2 v_dir = normalize(phys.v);
+    float v_mag = length(phys.v);
+    v_mag = max(0.0, v_mag - _Friction * _DeltaTime);
+    phys.v = v_mag * v_dir;
+  }
+  
+  // Update position
+  blob.pos += phys.v * _DeltaTime;
+  
+  // Boundary constraints
+  float min_x = -_AspectRatio + blob.r;
+  float max_x = _AspectRatio - blob.r;
+  float min_y = -1.0 + blob.r;
+  float max_y = 1.0 - blob.r;
+  
+  if (blob.pos.x < min_x) {
+    blob.pos.x = min_x;
+    phys.v.x *= -0.5; // Bounce with damping
+  } else if (blob.pos.x > max_x) {
+    blob.pos.x = max_x;
+    phys.v.x *= -0.5;
+  }
+  
+  if (blob.pos.y < min_y) {
+    blob.pos.y = min_y;
+    phys.v.y *= -0.5;
+  } else if (blob.pos.y > max_y) {
+    blob.pos.y = max_y;
+    phys.v.y *= -0.5;
+  }
+  
+  // Write back
+  _Blobs[i] = blob;
+  _Physics[i] = phys;
+}

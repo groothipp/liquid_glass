@@ -75,7 +75,7 @@ int main() {
 
   RID sampler = engine.create_sampler(SamplerSettings{ .anisotropic_filtering = false });
   RID post_process_target = engine.create_storage_image(width, height, ImageType::two_dim, Format::rgba8_srgb);
-  RID cloud_texture =engine.create_texture(std::format("{}/background.png", ASSET_DIR), sampler);
+  RID cloud_texture = engine.create_texture(std::format("{}/background.jpg", ASSET_DIR), sampler);
   RID shader_info_buffer = engine.create_uniform_buffer(sizeof(ShaderInfo));
   RID blobs_buffer = engine.create_storage_buffer(sizeof(Blob) * g_blobs.size());
 
