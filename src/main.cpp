@@ -1,6 +1,7 @@
 #include <groot/groot.hpp>
 
 #include <format>
+#include <random>
 
 using namespace groot;
 
@@ -14,12 +15,14 @@ struct ShaderInfo {
 };
 
 struct PhysicsInfo {
-  uvec2 dims;
+  alignas(8) uvec2 dims;
   unsigned int blob_count;
   float delta_time;
-  vec2 mouse_pos;
+  alignas(8) vec2 mouse_pos;
   unsigned int dragged_index;
   float friction;
+  float tension_gamma;
+  alignas(8) vec2 tension_bounds;
 };
 
 struct Blob {
@@ -31,24 +34,31 @@ struct Blob {
 };
 
 struct State {
+  RID& physics_comp;
   RID& glass_comp;
   RID& blit_comp;
   RID& post_process_target;
   RID& shader_info_buffer;
-  RID& blobs_buffer;
   RID& physics_info_buffer;
-  RID& physics_set;
-  RID& physics_pipeline;
+  RID blobs_buffer;
+  RID physics_set;
+  RID physics_pipeline;
   PhysicsInfo& physics_info;
+  ShaderInfo& shader_info;
   uvec2 dims;
   bool is_dragging = false;
   unsigned int drag_index = 0;
+  std::vector<Blob> blobs;
 };
 
-std::vector<Blob> g_blobs = {
-  { 0.0f, 0.3f, vec2(0.0f, 0.5f), vec2(0.0f), vec2(0.0f) },
-  { 1.0f, 0.3f, vec2(-0.8667f, -0.5f), vec2(0.0f), vec2(0.0f) },
-  { 2.0f, 0.3f, vec2(0.8667f, -0.5f), vec2(0.0f), vec2(0.0f) }
+class Random {
+  std::random_device m_rd;
+  std::mt19937_64 m_gen = std::mt19937_64(m_rd());
+  std::uniform_real_distribution<float> m_dist = std::uniform_real_distribution<float>(0.0f, 1.0f);
+
+  public:
+    Random() = default;
+    float operator()(float min = 0.0f, float max = 1.0f) { return (max - min) * m_dist(m_gen) + min; }
 };
 
 int main() {
@@ -86,12 +96,9 @@ int main() {
   RID cloud_texture = engine.create_texture(std::format("{}/background.jpg", ASSET_DIR), sampler);
   RID shader_info_buffer = engine.create_uniform_buffer(sizeof(ShaderInfo));
   RID physics_info_buffer = engine.create_uniform_buffer(sizeof(PhysicsInfo));
-  RID blobs_buffer = engine.create_storage_buffer(sizeof(Blob) * g_blobs.size());
 
   RID display_set = engine.create_descriptor_set({ cloud_texture });
-  RID physics_set = engine.create_descriptor_set({ physics_info_buffer, blobs_buffer });
 
-  RID physics_pipeline = engine.create_compute_pipeline(physics_comp, physics_set);
   RID display_pipeline = engine.create_graphics_pipeline(GraphicsPipelineShaders{
     .vertex   = display_vert,
     .fragment = display_frag
@@ -110,50 +117,76 @@ int main() {
 
   ShaderInfo shader_info{
     .dims           = uvec2(width, height),
-    .blob_count     = static_cast<unsigned int>(g_blobs.size()),
     .blob_thickness = 0.034f,
     .liquidness     = 0.3f,
     .blur_strength  = 0.75f,
     .chromatic_aberration = vec3(0.009f, 0.0101f, 0.013f)
   };
 
-  engine.write_buffer(shader_info_buffer, shader_info);
-  engine.write_buffer(blobs_buffer, g_blobs);
-
   engine.release_cursor();
 
   PhysicsInfo physics_info{
     .dims           = uvec2(width, height),
-    .blob_count     = static_cast<unsigned int>(g_blobs.size()),
     .dragged_index  = 0xFFFFFFFFu,
-    .friction       = 0.3f
+    .friction       = 0.3f,
+    .tension_gamma  = 0.045f,
+    .tension_bounds = vec2(0.45f, 1.44f)
   };
 
   State state{
+    .physics_comp         = physics_comp,
     .glass_comp           = glass_comp,
     .blit_comp            = blit_comp,
     .post_process_target  = post_process_target,
     .shader_info_buffer   = shader_info_buffer,
-    .blobs_buffer         = blobs_buffer,
     .physics_info_buffer  = physics_info_buffer,
-    .physics_set          = physics_set,
-    .physics_pipeline     = physics_pipeline,
     .physics_info         = physics_info,
+    .shader_info          = shader_info,
     .dims                 = uvec2(width, height)
   };
 
   engine.run([&engine, &state](double dt){
+    static Random rand;
+
     if (engine.just_pressed(Key::Escape))
       engine.close_window();
 
-    if (g_blobs.empty()) return;
+    float ar = static_cast<float>(state.dims.x) / static_cast<float>(state.dims.y);
+
+    if (engine.just_pressed(Key::Space)) {
+      state.blobs.emplace_back(Blob{
+        .s      = rand(),
+        .r      = rand(0.1f, 0.3f),
+        .pos    = vec2(rand(-ar, ar), rand(-1.0f, 1.0f)),
+        .vel    = vec2(0.0f),
+        .accel  = vec2(0.0f)
+      });
+
+      state.physics_info.blob_count += 1;
+      state.shader_info.blob_count += 1;
+
+      engine.write_buffer(state.shader_info_buffer, state.shader_info);
+
+      if (state.blobs_buffer.is_valid())
+        engine.destroy_buffer(state.blobs_buffer);
+      state.blobs_buffer = engine.create_storage_buffer(sizeof(Blob) * state.blobs.size());
+      engine.write_buffer(state.blobs_buffer, state.blobs);
+
+      if (state.physics_set.is_valid())
+        engine.destroy_descriptor_set(state.physics_set);
+      state.physics_set = engine.create_descriptor_set({ state.physics_info_buffer, state.blobs_buffer });
+
+      if (state.physics_pipeline.is_valid())
+        engine.destroy_pipeline(state.physics_pipeline);
+      state.physics_pipeline = engine.create_compute_pipeline(state.physics_comp, state.physics_set);
+    }
+
+    if (state.blobs.empty()) return;
 
     if (engine.just_released(MouseButton::Left)) {
       state.is_dragging = false;
       state.physics_info.dragged_index = 0xFFFFFFFFu;
     }
-
-    float ar = static_cast<float>(state.dims.x) / static_cast<float>(state.dims.y);
 
     vec2 mouse_pos = engine.mouse_pos();
     vec2 mouse_ndc = 2.0f * (mouse_pos / vec2(state.dims)) - vec2(1.0f);
@@ -164,20 +197,20 @@ int main() {
     pi.mouse_pos = mouse_ndc;
     pi.delta_time = dt;
 
-    g_blobs = engine.read_buffer<Blob>(state.blobs_buffer);
+    state.blobs = engine.read_buffer<Blob>(state.blobs_buffer);
 
     if (engine.is_pressed(MouseButton::Left) && !state.is_dragging) {
       unsigned int index = 0;
-      for (auto& blob : g_blobs) {
+      for (auto& blob : state.blobs) {
         vec2 p = mouse_ndc - blob.pos;
 
-        float x2 = p.x * p.x;  // Fixed typo
+        float x2 = p.x * p.x;
         float y2 = p.y * p.y;
         float r2 = x2 + y2 + blob.s * blob.s / (blob.r * blob.r) * x2 * y2;
 
         float sdf = sqrt(r2) - blob.r;
         if (sdf <= 0.0f) {
-          state.is_dragging = true;  // Set dragging state
+          state.is_dragging = true;
           state.drag_index = index;
           pi.dragged_index = index;
           break;
@@ -192,7 +225,7 @@ int main() {
     engine.compute_command(ComputeCommand{
       .pipeline = state.physics_pipeline,
       .descriptor_set = state.physics_set,
-      .work_groups    = { g_blobs.size(), 1, 1 }
+      .work_groups    = { state.blobs.size(), 1, 1 }
     });
     engine.dispatch();
 

@@ -15,6 +15,8 @@ layout(binding = 0) uniform _PhysicsInfo {
   vec2 _MousePos;
   uint _DraggedIndex;
   float _Friction;
+  float _TensionGamma;
+  vec2 _TensionBounds;
 };
 
 layout(binding = 1) buffer _BlobsBuffer {
@@ -42,17 +44,15 @@ void main() {
 
     Blob a = _Blobs[i];
 
-    vec2 dx = a.pos - b.pos;
-    float L = length(dx);
+    vec2 dL = a.pos - b.pos;
+    float L = length(dL);
 
-    float min_radius = (a.r + b.r) * 0.5;
-    float max_radius = (a.r + b.r) * 1.5;
+    float min_radius = (a.r + b.r) * _TensionBounds.x;
+    float max_radius = (a.r + b.r) * _TensionBounds.y;
     if (L > min_radius && L < max_radius) {
-      vec2 dir = dx / L;
-      float gamma = 0.05;
-      float L_norm = L / max_radius;
-      float strength = pow(1.0 - L_norm, 2.0);
-      b.accel += dir * strength * gamma;
+      vec2 dir = dL / L;
+      float t = smoothstep(min_radius, max_radius, L);
+      b.accel += dir * (1.0 - t) * _TensionGamma;
     }
   }
 
@@ -65,14 +65,23 @@ void main() {
 
   float ar = float(_Dims.x) / float(_Dims.y);
 
-  if (b.pos.x - b.r < -ar)      b.pos.x = -ar + b.r;
-  else if (b.pos.x + b.r > ar)  b.pos.x = ar - b.r;
+  if (b.pos.x - b.r < -ar) {
+    b.pos.x = -ar + b.r;
+    b.vel.x *= -1;
+  }
+  else if (b.pos.x + b.r > ar) {
+    b.pos.x = ar - b.r;
+    b.vel.x *= -1;
+  }
 
-  if (b.pos.y - b.r < -1.0)     b.pos.y = -1.0 + b.r;
-  else if (b.pos.y + b.r > 1.0) b.pos.y = 1.0 - b.r;
-
-  if (prev_pos == b.pos)
-    b.vel = vec2(0.0);
+  if (b.pos.y - b.r < -1.0) {
+    b.pos.y = -1.0 + b.r;
+    b.vel.y *= -1;
+  }
+  else if (b.pos.y + b.r > 1.0) {
+    b.pos.y = 1.0 - b.r;
+    b.vel.y *= -1;
+  }
 
   _Blobs[index] = b;
 }
