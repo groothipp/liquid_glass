@@ -13,38 +13,43 @@ struct ShaderInfo {
   alignas(16) vec3 chromatic_aberration;
 };
 
+struct PhysicsInfo {
+  uvec2 dims;
+  unsigned int blob_count;
+  float delta_time;
+  vec2 mouse_pos;
+  unsigned int dragged_index;
+  float friction;
+};
+
 struct Blob {
   float s;
   float r;
   vec2 pos;
-};
-
-struct Physics {
-  vec2 a;
-  vec2 v;
+  vec2 vel;
+  vec2 accel;
 };
 
 struct State {
-  uvec2 dims;
   RID& glass_comp;
   RID& blit_comp;
   RID& post_process_target;
   RID& shader_info_buffer;
   RID& blobs_buffer;
+  RID& physics_info_buffer;
+  RID& physics_set;
+  RID& physics_pipeline;
+  PhysicsInfo& physics_info;
+  uvec2 dims;
   bool is_dragging = false;
   unsigned int drag_index = 0;
 };
 
 std::vector<Blob> g_blobs = {
-  { 0.0f, 0.3f, vec2(0.0f, 0.5f) },
-  { 1.0f, 0.3f, vec2(-0.8667f, -0.5f) },
-  { 2.0f, 0.3f, vec2(0.8667f, -0.5f) }
+  { 0.0f, 0.3f, vec2(0.0f, 0.5f), vec2(0.0f), vec2(0.0f) },
+  { 1.0f, 0.3f, vec2(-0.8667f, -0.5f), vec2(0.0f), vec2(0.0f) },
+  { 2.0f, 0.3f, vec2(0.8667f, -0.5f), vec2(0.0f), vec2(0.0f) }
 };
-
-std::vector<Physics> g_physics = {{}, {}, {}};
-
-const float g_friction = 0.02f;
-const float g_max_accel = 0.2f;
 
 int main() {
   Engine engine(Settings{
@@ -57,6 +62,7 @@ int main() {
   RID display_frag = engine.compile_shader(ShaderType::Fragment, std::format("{}/display.frag", SHADER_DIR));
   RID glass_comp = engine.compile_shader(ShaderType::Compute, std::format("{}/glass.comp", SHADER_DIR));
   RID blit_comp = engine.compile_shader(ShaderType::Compute, std::format("{}/blit.comp", SHADER_DIR));
+  RID physics_comp = engine.compile_shader(ShaderType::Compute, std::format("{}/physics.comp", SHADER_DIR));
 
   std::string shader_errors = "";
   if (!display_vert.is_valid())
@@ -67,6 +73,8 @@ int main() {
     shader_errors += "\n\tglass.comp";
   if (!blit_comp.is_valid())
     shader_errors += "\n\tblit.comp";
+  if (!physics_comp.is_valid())
+    shader_errors += "\n\tphysics.comp";
 
   if (shader_errors != "")
     Log::runtime_error(std::format("errors compiling shaders:{}", shader_errors));
@@ -77,10 +85,13 @@ int main() {
   RID post_process_target = engine.create_storage_image(width, height, ImageType::two_dim, Format::rgba8_srgb);
   RID cloud_texture = engine.create_texture(std::format("{}/background.jpg", ASSET_DIR), sampler);
   RID shader_info_buffer = engine.create_uniform_buffer(sizeof(ShaderInfo));
+  RID physics_info_buffer = engine.create_uniform_buffer(sizeof(PhysicsInfo));
   RID blobs_buffer = engine.create_storage_buffer(sizeof(Blob) * g_blobs.size());
 
   RID display_set = engine.create_descriptor_set({ cloud_texture });
+  RID physics_set = engine.create_descriptor_set({ physics_info_buffer, blobs_buffer });
 
+  RID physics_pipeline = engine.create_compute_pipeline(physics_comp, physics_set);
   RID display_pipeline = engine.create_graphics_pipeline(GraphicsPipelineShaders{
     .vertex   = display_vert,
     .fragment = display_frag
@@ -111,21 +122,36 @@ int main() {
 
   engine.release_cursor();
 
+  PhysicsInfo physics_info{
+    .dims           = uvec2(width, height),
+    .blob_count     = static_cast<unsigned int>(g_blobs.size()),
+    .dragged_index  = 0xFFFFFFFFu,
+    .friction       = 0.3f
+  };
+
   State state{
-    .dims                 = uvec2(width, height),
     .glass_comp           = glass_comp,
     .blit_comp            = blit_comp,
     .post_process_target  = post_process_target,
     .shader_info_buffer   = shader_info_buffer,
-    .blobs_buffer         = blobs_buffer
+    .blobs_buffer         = blobs_buffer,
+    .physics_info_buffer  = physics_info_buffer,
+    .physics_set          = physics_set,
+    .physics_pipeline     = physics_pipeline,
+    .physics_info         = physics_info,
+    .dims                 = uvec2(width, height)
   };
 
   engine.run([&engine, &state](double dt){
     if (engine.just_pressed(Key::Escape))
       engine.close_window();
 
-    if (engine.just_released(MouseButton::Left))
+    if (g_blobs.empty()) return;
+
+    if (engine.just_released(MouseButton::Left)) {
       state.is_dragging = false;
+      state.physics_info.dragged_index = 0xFFFFFFFFu;
+    }
 
     float ar = static_cast<float>(state.dims.x) / static_cast<float>(state.dims.y);
 
@@ -134,65 +160,41 @@ int main() {
     mouse_ndc.x *= ar;
     mouse_ndc.y *= -1.0f;
 
-    unsigned int index = 0;
+    PhysicsInfo& pi = state.physics_info;
+    pi.mouse_pos = mouse_ndc;
+    pi.delta_time = dt;
+
+    g_blobs = engine.read_buffer<Blob>(state.blobs_buffer);
+
     if (engine.is_pressed(MouseButton::Left) && !state.is_dragging) {
+      unsigned int index = 0;
       for (auto& blob : g_blobs) {
         vec2 p = mouse_ndc - blob.pos;
 
-        float x2 = p.x * p.x;
+        float x2 = p.x * p.x;  // Fixed typo
         float y2 = p.y * p.y;
-        float R2 = x2 + y2 + blob.s * blob.s / (blob.r * blob.r) * x2 * y2;
+        float r2 = x2 + y2 + blob.s * blob.s / (blob.r * blob.r) * x2 * y2;
 
-        float sdf = std::sqrt(R2) - blob.r;
-        if (sdf > 0.0)  {
-          ++index;
-          continue;
+        float sdf = sqrt(r2) - blob.r;
+        if (sdf <= 0.0f) {
+          state.is_dragging = true;  // Set dragging state
+          state.drag_index = index;
+          pi.dragged_index = index;
+          break;
         }
-        state.is_dragging = true;
-        state.drag_index = index;
-        break;
+
+        ++index;
       }
     }
 
-    if (state.is_dragging) {
-      Blob& b = g_blobs[state.drag_index];
-      Physics& phys = g_physics[state.drag_index];
+    engine.write_buffer(state.physics_info_buffer, pi);
 
-      vec2 gamma = mouse_ndc - b.pos;
-      phys.a = std::min(gamma.mag(), g_max_accel) * gamma.normalized() * dt;
-    }
-
-    bool update_buffer = false;
-    for (unsigned int i = 0; i < g_blobs.size(); ++i) {
-      Blob& b = g_blobs[i];
-      Physics& phys = g_physics[i];
-
-      vec2 dv = phys.a * dt;
-      phys.v = phys.v + dv;
-
-      if (phys.v.mag() > 0.0f) {
-        vec2 v_dir = phys.v.normalized();
-        float v_mag = phys.v.mag();
-        phys.v = std::max(0.0f, v_mag - g_friction * static_cast<float>(dt)) * v_dir;
-      }
-
-      if (!state.is_dragging || state.drag_index != i)
-        phys.a = vec2(0.0f);
-
-      if (phys.v.mag() > 0.0f) {
-        update_buffer = true;
-        b.pos = b.pos + phys.v * dt;
-
-        if (b.pos.x - b.r < -ar) b.pos.x = -ar + b.r;
-        else if (b.pos.x + b.r > ar) b.pos.x = ar - b.r;
-
-        if (b.pos.y - b.r < -1.0f) b.pos.y = -1.0f + b.r;
-        if (b.pos.y + b.r > 1.0f) b.pos.y = 1.0f - b.r;
-      }
-    }
-
-    if (update_buffer)
-      engine.write_buffer(state.blobs_buffer, g_blobs);
+    engine.compute_command(ComputeCommand{
+      .pipeline = state.physics_pipeline,
+      .descriptor_set = state.physics_set,
+      .work_groups    = { g_blobs.size(), 1, 1 }
+    });
+    engine.dispatch();
 
     RID render_target = engine.render_target();
 

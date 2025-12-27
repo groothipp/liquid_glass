@@ -1,123 +1,78 @@
 #version 460
 
-#define MAX_BLOBS 15
-
 struct Blob {
   float s;
   float r;
   vec2 pos;
+  vec2 vel;
+  vec2 accel;
 };
 
-struct Physics {
-  vec2 a;
-  vec2 v;
-};
-
-layout(binding = 0) buffer _BlobBuffer {
-  Blob _Blobs[];
-};
-
-layout(binding = 1) buffer _PhysicsBuffer {
-  Physics _Physics[];
-};
-
-layout(binding = 2) uniform _PhysicsSettings {
+layout(binding = 0) uniform _PhysicsInfo {
+  uvec2 _Dims;
   uint _BlobCount;
   float _DeltaTime;
+  vec2 _MousePos;
+  uint _DraggedIndex;
   float _Friction;
-  float _SurfaceTensionStrength;
-  float _SurfaceTensionRange;
-  vec2 _MouseNDC;
-  uint _DragIndex;
-  uint _IsDragging;
-  vec2 _MouseVelocity;
-  float _AspectRatio;
+};
+
+layout(binding = 1) buffer _BlobsBuffer {
+  Blob _Blobs[];
 };
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 void main() {
-  uint i = gl_GlobalInvocationID.x;
-  if (i >= _BlobCount) return;
-  
-  Blob blob = _Blobs[i];
-  Physics phys = _Physics[i];
-  
-  // Reset acceleration
-  phys.a = vec2(0.0);
-  
-  // Mouse dragging force
-  if (_IsDragging == 1 && i == _DragIndex) {
-    // Transfer mouse velocity
-    float velocity_transfer = 0.5;
-    phys.v = phys.v * 0.8 + _MouseVelocity * velocity_transfer;
-    
-    // Spring force toward cursor
-    vec2 to_mouse = _MouseNDC - blob.pos;
-    float spring_strength = 15.0;
-    phys.a += to_mouse * spring_strength;
+  uint index = gl_GlobalInvocationID.x;
+  Blob b = _Blobs[index];
+
+  b.accel = vec2(0.0);
+
+  if (_DraggedIndex == index) {
+    vec2 dx = _MousePos - b.pos;
+    if (length(dx) < 1e-6)
+      dx = vec2(0.0);
+    b.accel = 0.5 * dx;
   }
-  
-  // Blob-to-blob surface tension forces
-  for (uint j = 0; j < _BlobCount; ++j) {
-    if (i == j) continue;
-    
-    Blob other = _Blobs[j];
-    vec2 delta = other.pos - blob.pos;
-    float dist = length(delta);
-    
-    // Combined radius (when blobs should start attracting)
-    float interaction_dist = (blob.r + other.r) * _SurfaceTensionRange;
-    
-    if (dist < interaction_dist && dist > 0.001) {
-      // Attract when close (surface tension)
-      vec2 direction = delta / dist;
-      
-      // Strength increases as blobs get closer
-      float strength = 1.0 - (dist / interaction_dist);
-      strength = strength * strength; // Quadratic falloff for snappier feel
-      
-      phys.a += direction * strength * _SurfaceTensionStrength;
+  b.accel -= _Friction * b.vel;
+
+  for (int i = 0; i < _BlobCount; ++i) {
+    if (i == index) continue;
+
+    Blob a = _Blobs[i];
+
+    vec2 dx = a.pos - b.pos;
+    float L = length(dx);
+
+    float min_radius = (a.r + b.r) * 0.5;
+    float max_radius = (a.r + b.r) * 1.5;
+    if (L > min_radius && L < max_radius) {
+      vec2 dir = dx / L;
+      float gamma = 0.05;
+      float L_norm = L / max_radius;
+      float strength = pow(1.0 - L_norm, 2.0);
+      b.accel += dir * strength * gamma;
     }
   }
-  
-  // Apply acceleration to velocity
-  phys.v += phys.a * _DeltaTime;
-  
-  // Apply friction
-  if (length(phys.v) > 0.0) {
-    vec2 v_dir = normalize(phys.v);
-    float v_mag = length(phys.v);
-    v_mag = max(0.0, v_mag - _Friction * _DeltaTime);
-    phys.v = v_mag * v_dir;
-  }
-  
-  // Update position
-  blob.pos += phys.v * _DeltaTime;
-  
-  // Boundary constraints
-  float min_x = -_AspectRatio + blob.r;
-  float max_x = _AspectRatio - blob.r;
-  float min_y = -1.0 + blob.r;
-  float max_y = 1.0 - blob.r;
-  
-  if (blob.pos.x < min_x) {
-    blob.pos.x = min_x;
-    phys.v.x *= -0.5; // Bounce with damping
-  } else if (blob.pos.x > max_x) {
-    blob.pos.x = max_x;
-    phys.v.x *= -0.5;
-  }
-  
-  if (blob.pos.y < min_y) {
-    blob.pos.y = min_y;
-    phys.v.y *= -0.5;
-  } else if (blob.pos.y > max_y) {
-    blob.pos.y = max_y;
-    phys.v.y *= -0.5;
-  }
-  
-  // Write back
-  _Blobs[i] = blob;
-  _Physics[i] = phys;
+
+  b.vel += b.accel * _DeltaTime;
+  if (length(b.vel) < 1e-6)
+    b.vel = vec2(0.0);
+
+  vec2 prev_pos = b.pos;
+  b.pos += b.vel * _DeltaTime;
+
+  float ar = float(_Dims.x) / float(_Dims.y);
+
+  if (b.pos.x - b.r < -ar)      b.pos.x = -ar + b.r;
+  else if (b.pos.x + b.r > ar)  b.pos.x = ar - b.r;
+
+  if (b.pos.y - b.r < -1.0)     b.pos.y = -1.0 + b.r;
+  else if (b.pos.y + b.r > 1.0) b.pos.y = 1.0 - b.r;
+
+  if (prev_pos == b.pos)
+    b.vel = vec2(0.0);
+
+  _Blobs[index] = b;
 }
