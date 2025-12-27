@@ -18,6 +18,7 @@ layout(binding = 0) uniform _PhysicsInfo {
   float _Friction;
   float _TensionGamma;
   vec2 _TensionBounds;
+  float _DragSpring;
 };
 
 layout(binding = 1) buffer _BlobsBuffer {
@@ -36,7 +37,7 @@ void main() {
     vec2 dx = _MousePos - b.pos;
     if (length(dx) < 1e-6)
       dx = vec2(0.0);
-    b.accel = 0.5 * dx;
+    b.accel = _DragSpring * dx;
   }
   b.accel -= _Friction * b.vel;
 

@@ -23,6 +23,7 @@ struct PhysicsInfo {
   float friction;
   float tension_gamma;
   alignas(8) vec2 tension_bounds;
+  float drag_spring;
 };
 
 struct Blob {
@@ -120,7 +121,7 @@ int main() {
     .dims           = uvec2(width, height),
     .blob_thickness = 0.034f,
     .liquidness     = 0.3f,
-    .blur_strength  = 0.75f,
+    .blur_strength  = 0.4f,
     .chromatic_aberration = vec3(0.009f, 0.0101f, 0.013f)
   };
 
@@ -131,7 +132,8 @@ int main() {
     .dragged_index  = 0xFFFFFFFFu,
     .friction       = 0.3f,
     .tension_gamma  = 0.04f,
-    .tension_bounds = vec2(0.45f, 1.3f)
+    .tension_bounds = vec2(0.45f, 1.3f),
+    .drag_spring    = 0.5f
   };
 
   State state{
