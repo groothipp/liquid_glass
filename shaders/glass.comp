@@ -13,8 +13,8 @@ struct Blob {
   vec2 accel;
 };
 
-layout(binding = 0) uniform image2D _RenderTarget;
-layout(binding = 1) uniform image2D _PostProcessTarget;
+layout(binding = 0) uniform image2D _DrawOutput;
+layout(binding = 1) uniform image2D _RenderTarget;
 
 layout(binding = 2) uniform _ShaderInfo {
   uvec2 _Dims;
@@ -56,7 +56,7 @@ vec3 blur(ivec2 index, float strength) {
       ivec2 i = index + ivec2(x, y);
       i = clamp(i, ivec2(0, 0), ivec2(_Dims - 1));
 
-      color += imageLoad(_RenderTarget, i).rgb;
+      color += imageLoad(_DrawOutput, i).rgb;
     }
   }
 
@@ -83,7 +83,8 @@ void main() {
     blended_sdf = i == 0 ? sdf : smin(blended_sdf, sdf, _Liquidness);
   }
 
-  float shape_mask = float(blended_sdf <= 0.0);
+  if (blended_sdf > 0.0) return;
+
   float edge_mask = smoothstep(-_BlobThickness, 0.0, blended_sdf);
 
   vec2 refraction = mix(vec2(0.015), vec2(0.0225), edge_mask);
@@ -95,20 +96,16 @@ void main() {
   vec3 blur_color = blur(refracted_index, blur_strength);
 
   ivec2 red_offset = ivec2(_ChromaticAberration.r * vec2(_Dims));
-  float r = imageLoad(_RenderTarget, refracted_index + red_offset).r;
+  float r = imageLoad(_DrawOutput, refracted_index + red_offset).r;
 
   ivec2 green_offset = ivec2(_ChromaticAberration.g * vec2(_Dims));
-  float g = imageLoad(_RenderTarget, refracted_index + green_offset).g;
+  float g = imageLoad(_DrawOutput, refracted_index + green_offset).g;
 
   ivec2 blue_offset = ivec2(_ChromaticAberration.b * vec2(_Dims));
-  float b = imageLoad(_RenderTarget, refracted_index + blue_offset).b;
+  float b = imageLoad(_DrawOutput, refracted_index + blue_offset).b;
 
   vec3 aberration_color = vec3(r, g, b);
 
-  vec3 shape_color = (blur_color + aberration_color * edge_mask) * blended_tint;
-  vec3 background_color = imageLoad(_RenderTarget, ivec2(index)).rgb;
-
-  vec3 albedo = mix(background_color, shape_color, shape_mask);
-
-  imageStore(_PostProcessTarget, ivec2(index), vec4(albedo, 1.0));
+  vec3 albedo = (blur_color + aberration_color * edge_mask) * blended_tint;
+  imageStore(_RenderTarget, ivec2(index), vec4(albedo, 1.0));
 }

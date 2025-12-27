@@ -38,8 +38,6 @@ struct Blob {
 struct State {
   RID& physics_comp;
   RID& glass_comp;
-  RID& blit_comp;
-  RID& post_process_target;
   RID& shader_info_buffer;
   RID& physics_info_buffer;
   RID blobs_buffer;
@@ -49,7 +47,6 @@ struct State {
   ShaderInfo& shader_info;
   uvec2 dims;
   bool is_dragging = false;
-  unsigned int drag_index = 0;
   std::vector<Blob> blobs;
 };
 
@@ -73,7 +70,6 @@ int main() {
   RID display_vert = engine.compile_shader(ShaderType::Vertex, std::format("{}/display.vert", SHADER_DIR));
   RID display_frag = engine.compile_shader(ShaderType::Fragment, std::format("{}/display.frag", SHADER_DIR));
   RID glass_comp = engine.compile_shader(ShaderType::Compute, std::format("{}/glass.comp", SHADER_DIR));
-  RID blit_comp = engine.compile_shader(ShaderType::Compute, std::format("{}/blit.comp", SHADER_DIR));
   RID physics_comp = engine.compile_shader(ShaderType::Compute, std::format("{}/physics.comp", SHADER_DIR));
 
   std::string shader_errors = "";
@@ -83,8 +79,6 @@ int main() {
     shader_errors += "\n\tdisplay.frag";
   if (!glass_comp.is_valid())
     shader_errors += "\n\tglass.comp";
-  if (!blit_comp.is_valid())
-    shader_errors += "\n\tblit.comp";
   if (!physics_comp.is_valid())
     shader_errors += "\n\tphysics.comp";
 
@@ -94,7 +88,6 @@ int main() {
   auto [width, height] = engine.viewport_dims();
 
   RID sampler = engine.create_sampler(SamplerSettings{ .anisotropic_filtering = false });
-  RID post_process_target = engine.create_storage_image(width, height, ImageType::two_dim, Format::rgba8_srgb);
   RID cloud_texture = engine.create_texture(std::format("{}/background.jpg", ASSET_DIR), sampler);
   RID shader_info_buffer = engine.create_uniform_buffer(sizeof(ShaderInfo));
   RID physics_info_buffer = engine.create_uniform_buffer(sizeof(PhysicsInfo));
@@ -139,8 +132,6 @@ int main() {
   State state{
     .physics_comp         = physics_comp,
     .glass_comp           = glass_comp,
-    .blit_comp            = blit_comp,
-    .post_process_target  = post_process_target,
     .shader_info_buffer   = shader_info_buffer,
     .physics_info_buffer  = physics_info_buffer,
     .physics_info         = physics_info,
@@ -215,7 +206,6 @@ int main() {
         float sdf = sqrt(r2) - blob.r;
         if (sdf <= 0.0f) {
           state.is_dragging = true;
-          state.drag_index = index;
           pi.dragged_index = index;
           break;
         }
@@ -233,15 +223,10 @@ int main() {
     });
     engine.dispatch();
 
-    RID render_target = engine.render_target();
-
     RID glass_set = engine.create_descriptor_set(
-      { render_target, state.post_process_target, state.shader_info_buffer, state.blobs_buffer }
+      { engine.render_target(), state.shader_info_buffer, state.blobs_buffer }
     );
-    RID blit_set = engine.create_descriptor_set({ render_target, state.post_process_target });
-
     RID glass_pipeline = engine.create_compute_pipeline(state.glass_comp, glass_set);
-    RID blit_pipeline = engine.create_compute_pipeline(state.blit_comp, blit_set);
 
     std::tuple<unsigned int, unsigned int, unsigned int> work_groups = {
       (state.dims.x + 15) / 16, (state.dims.y + 15) / 16, 1
@@ -251,14 +236,6 @@ int main() {
       .pipeline       = glass_pipeline,
       .descriptor_set = glass_set,
       .work_groups    = work_groups,
-      .post_process   = true
-    });
-
-    engine.compute_command(ComputeCommand{
-      .pipeline       = blit_pipeline,
-      .descriptor_set = blit_set,
-      .work_groups    = work_groups,
-      .barrier        = true,
       .post_process   = true
     });
   });
