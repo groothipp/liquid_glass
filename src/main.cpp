@@ -113,8 +113,8 @@ int main() {
   ShaderInfo shader_info{
     .dims           = uvec2(width, height),
     .blob_thickness = 0.034f,
-    .liquidness     = 0.3f,
-    .blur_strength  = 0.4f,
+    .liquidness     = 0.2f,
+    .blur_strength  = 0.45f,
     .chromatic_aberration = vec3(0.009f, 0.0101f, 0.013f)
   };
 
@@ -123,7 +123,7 @@ int main() {
   PhysicsInfo physics_info{
     .dims           = uvec2(width, height),
     .dragged_index  = 0xFFFFFFFFu,
-    .friction       = 0.3f,
+    .friction       = 0.4f,
     .tension_gamma  = 0.04f,
     .tension_bounds = vec2(0.45f, 1.3f),
     .drag_spring    = 0.5f
@@ -216,12 +216,14 @@ int main() {
 
     engine.write_buffer(state.physics_info_buffer, pi);
 
-    engine.compute_command(ComputeCommand{
+    engine.dispatch(ComputeCommand{
       .pipeline = state.physics_pipeline,
       .descriptor_set = state.physics_set,
       .work_groups    = { state.blobs.size(), 1, 1 }
     });
-    engine.dispatch();
+  },
+  [&engine, &state](double){
+    if (state.blobs.empty()) return;
 
     RID glass_set = engine.create_descriptor_set(
       { engine.render_target(), state.shader_info_buffer, state.blobs_buffer }
@@ -232,11 +234,10 @@ int main() {
       (state.dims.x + 15) / 16, (state.dims.y + 15) / 16, 1
     };
 
-    engine.compute_command(ComputeCommand{
+    engine.dispatch(ComputeCommand{
       .pipeline       = glass_pipeline,
       .descriptor_set = glass_set,
       .work_groups    = work_groups,
-      .post_process   = true
     });
   });
 }
