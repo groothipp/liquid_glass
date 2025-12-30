@@ -86,8 +86,9 @@ void main() {
   if (blended_sdf > 0.0) return;
 
   float edge_mask = smoothstep(-_BlobThickness, 0.0, blended_sdf);
+  float body_mask = smoothstep(-1.0, -_BlobThickness, blended_sdf);
 
-  vec2 refraction = mix(vec2(0.05, -0.05), vec2(0.1, -0.1), edge_mask);
+  vec2 refraction = mix(vec2(0.02, -0.02), vec2(0.04, -0.04), edge_mask) + mix(vec2(0.01, -0.01), vec2(0.02, -0.02), body_mask);
   uv += refraction;
   uv = clamp(uv, vec2(0.0), vec2(1.0));
   ivec2 refracted_index = ivec2(uv * vec2(_Dims));
